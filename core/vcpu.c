@@ -571,6 +571,7 @@ static void vcpu_init(struct vcpu_t *vcpu)
 
     vcpu->tsc_offset = 0ULL - ia32_rdtsc();
     vcpu->tsc_delta = 0ULL;
+    vcpu->nsec_delta = 0ULL;
 
     // Prepare the vcpu state to Power-up
     state->_rflags = 2;
