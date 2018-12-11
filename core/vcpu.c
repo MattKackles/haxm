@@ -90,6 +90,7 @@ static int exit_cpuid(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int exit_hlt(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int exit_invlpg(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int exit_rdtsc(struct vcpu_t *vcpu, struct hax_tunnel *htun);
+static int exit_rdtscp(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int exit_cr_access(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int exit_dr_access(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int exit_io_access(struct vcpu_t *vcpu, struct hax_tunnel *htun);
@@ -386,6 +387,7 @@ static int (*handler_funcs[])(struct vcpu_t *vcpu, struct hax_tunnel *htun) = {
     [VMX_EXIT_FAILED_VMENTER_GS]  = exit_invalid_guest_state,
     [VMX_EXIT_EPT_VIOLATION]      = exit_ept_violation,
     [VMX_EXIT_EPT_MISCONFIG]      = exit_ept_misconfiguration,
+    [VMX_EXIT_RDTSCP]             = exit_rdtscp,
     [VMX_EXIT_XSETBV]             = exit_xsetbv,
 };
 
@@ -568,6 +570,7 @@ static void vcpu_init(struct vcpu_t *vcpu)
     vcpu->ref_count = 1;
 
     vcpu->tsc_offset = 0ULL - ia32_rdtsc();
+    vcpu->tsc_delta = 0ULL;
 
     // Prepare the vcpu state to Power-up
     state->_rflags = 2;
@@ -1326,7 +1329,8 @@ static void fill_common_vmcs(struct vcpu_t *vcpu)
 
     pcpu_ctls = IO_BITMAP_ACTIVE | MSR_BITMAP_ACTIVE | DR_EXITING |
                 INTERRUPT_WINDOW_EXITING | USE_TSC_OFFSETTING | HLT_EXITING |
-                CR8_LOAD_EXITING | CR8_STORE_EXITING | SECONDARY_CONTROLS;
+                CR8_LOAD_EXITING | CR8_STORE_EXITING | SECONDARY_CONTROLS |
+                RDTSC_EXITING;
 
     scpu_ctls = ENABLE_EPT;
 
@@ -2756,7 +2760,18 @@ static int exit_invlpg(struct vcpu_t *vcpu, struct hax_tunnel *htun)
 
 static int exit_rdtsc(struct vcpu_t *vcpu, struct hax_tunnel *htun)
 {
-    hax_debug("rdtsc exiting: rip: %llx\n", vcpu->state->_rip);
+    vcpu->state->_rax = htun->guest_tsc & 0xFFFFFFFF;
+    vcpu->state->_rdx = (htun->guest_tsc >> 0x20) & 0xFFFFFFFF;
+    advance_rip(vcpu);
+    return HAX_RESUME;
+}
+
+static int exit_rdtscp(struct vcpu_t *vcpu, struct hax_tunnel *htun)
+{
+    vcpu->state->_rax = htun->guest_tsc & 0xFFFFFFFF;
+    vcpu->state->_rdx = (htun->guest_tsc >> 0x20) & 0xFFFFFFFF;
+    vcpu->state->_rcx = vcpu->gstate.tsc_aux & 0xFFFFFFFF;
+    advance_rip(vcpu);
     return HAX_RESUME;
 }
 

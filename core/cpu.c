@@ -293,7 +293,14 @@ vmx_result_t cpu_vmx_run(struct vcpu_t *vcpu, struct hax_tunnel *htun)
 
     vcpu_load_guest_state(vcpu);
 
+    if (1 /* RECORDING_GUEST_TSC */) {
+        uint64_t tsc = vcpu->tsc_offset + ia32_rdtsc() - vcpu->tsc_delta;
+        vcpu->tsc_delta += tsc - htun->guest_tsc;
+    }
+
     result = asm_vmxrun(vcpu->state, vcpu->launched);
+
+    htun->guest_tsc = vcpu->tsc_offset + ia32_rdtsc() - vcpu->tsc_delta;
 
     vcpu->is_running = 0;
     vcpu_save_guest_state(vcpu);
