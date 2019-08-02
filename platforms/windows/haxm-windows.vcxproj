@@ -102,6 +102,12 @@
     <ClCompile>
       <SupportJustMyCode>false</SupportJustMyCode>
     </ClCompile>
+    <PreBuildEvent>
+      <Command>$(SolutionDir)scripts\stop-uninstall-haxm.bat</Command>
+    </PreBuildEvent>
+    <PostBuildEvent>
+      <Command>$(SolutionDir)scripts\install-haxm.bat "$(TARGETPATH)"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
   </ItemDefinitionGroup>

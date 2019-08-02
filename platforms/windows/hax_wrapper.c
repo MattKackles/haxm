@@ -281,3 +281,14 @@ void hax_panic_vcpu(struct vcpu_t *v, char *fmt, ...)
     vDbgPrintExWithPrefix("haxm_panic:", -1, 0, fmt, arglist);
     vcpu_set_panic(v);
 }
+
+uint64_t hax_get_clock()
+{
+    LARGE_INTEGER ticks;
+    LARGE_INTEGER freq;
+    uint64_t nsec;
+
+    ticks = KeQueryPerformanceCounter(&freq);
+    nsec = (ticks.QuadPart * 1000000000ULL) / freq.QuadPart;
+    return nsec;
+}

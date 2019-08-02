@@ -90,6 +90,7 @@ static int exit_cpuid(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int exit_hlt(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int exit_invlpg(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int exit_rdtsc(struct vcpu_t *vcpu, struct hax_tunnel *htun);
+static int exit_rdtscp(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int exit_cr_access(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int exit_dr_access(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int exit_io_access(struct vcpu_t *vcpu, struct hax_tunnel *htun);
@@ -100,6 +101,7 @@ static int exit_invalid_guest_state(struct vcpu_t *vcpu,
 static int exit_ept_misconfiguration(struct vcpu_t *vcpu,
                                      struct hax_tunnel *htun);
 static int exit_ept_violation(struct vcpu_t *vcpu, struct hax_tunnel *htun);
+static int exit_xsetbv(struct vcpu_t *vcpu, struct hax_tunnel *htun);
 static int null_handler(struct vcpu_t *vcpu, struct hax_tunnel *hun);
 
 static void advance_rip(struct vcpu_t *vcpu);
@@ -386,6 +388,8 @@ static int (*handler_funcs[])(struct vcpu_t *vcpu, struct hax_tunnel *htun) = {
     [VMX_EXIT_FAILED_VMENTER_GS]  = exit_invalid_guest_state,
     [VMX_EXIT_EPT_VIOLATION]      = exit_ept_violation,
     [VMX_EXIT_EPT_MISCONFIG]      = exit_ept_misconfiguration,
+    [VMX_EXIT_RDTSCP]             = exit_rdtscp,
+    [VMX_EXIT_XSETBV]             = exit_xsetbv,
 };
 
 static int nr_handlers = ARRAY_ELEMENTS(handler_funcs);
@@ -567,6 +571,8 @@ static void vcpu_init(struct vcpu_t *vcpu)
     vcpu->ref_count = 1;
 
     vcpu->tsc_offset = 0ULL - ia32_rdtsc();
+    vcpu->tsc_delta = 0ULL;
+    vcpu->nsec_delta = 0ULL;
 
     // Prepare the vcpu state to Power-up
     state->_rflags = 2;
@@ -1325,7 +1331,8 @@ static void fill_common_vmcs(struct vcpu_t *vcpu)
 
     pcpu_ctls = IO_BITMAP_ACTIVE | MSR_BITMAP_ACTIVE | DR_EXITING |
                 INTERRUPT_WINDOW_EXITING | USE_TSC_OFFSETTING | HLT_EXITING |
-                CR8_LOAD_EXITING | CR8_STORE_EXITING | SECONDARY_CONTROLS;
+                CR8_LOAD_EXITING | CR8_STORE_EXITING | SECONDARY_CONTROLS |
+                RDTSC_EXITING;
 
     scpu_ctls = ENABLE_EPT;
 
@@ -2511,7 +2518,7 @@ static void handle_cpuid_virtual(struct vcpu_t *vcpu, uint32_t a, uint32_t c)
     uint32_t hw_model;
 
     static uint32_t cpu_features_1 =
-            // pat is disabled!
+            FEATURE(PAT)        |
             FEATURE(FPU)        |
             FEATURE(VME)        |
             FEATURE(DE)         |
@@ -2552,6 +2559,9 @@ static void handle_cpuid_virtual(struct vcpu_t *vcpu, uint32_t a, uint32_t c)
     // Conditional features
     if (cpu_has_feature(X86_FEATURE_AESNI)) {
         cpu_features_2 |= FEATURE(AESNI);
+    }
+    if (cpu_has_feature(X86_FEATURE_XSAVE)) {
+        cpu_features_2 |= FEATURE(XSAVE);
     }
     if (cpu_has_feature(X86_FEATURE_RDTSCP)) {
         cpu_features_ext |= FEATURE(RDTSCP);
@@ -2762,7 +2772,18 @@ static int exit_invlpg(struct vcpu_t *vcpu, struct hax_tunnel *htun)
 
 static int exit_rdtsc(struct vcpu_t *vcpu, struct hax_tunnel *htun)
 {
-    hax_debug("rdtsc exiting: rip: %llx\n", vcpu->state->_rip);
+    vcpu->state->_rax = htun->guest_tsc & 0xFFFFFFFF;
+    vcpu->state->_rdx = (htun->guest_tsc >> 0x20) & 0xFFFFFFFF;
+    advance_rip(vcpu);
+    return HAX_RESUME;
+}
+
+static int exit_rdtscp(struct vcpu_t *vcpu, struct hax_tunnel *htun)
+{
+    vcpu->state->_rax = htun->guest_tsc & 0xFFFFFFFF;
+    vcpu->state->_rdx = (htun->guest_tsc >> 0x20) & 0xFFFFFFFF;
+    vcpu->state->_rcx = vcpu->gstate.tsc_aux & 0xFFFFFFFF;
+    advance_rip(vcpu);
     return HAX_RESUME;
 }
 
@@ -3454,6 +3475,21 @@ static int handle_msr_read(struct vcpu_t *vcpu, uint32_t msr, uint64_t *val)
             r = misc_msr_read(vcpu, msr, val);
             break;
         }
+        case 0x1DD: /* IA32_LASTINTFROMIP */
+            *val = 0x13370001;
+            break;
+        case 0x1DE: /* IA32_LASTINTTOIP */
+            *val = 0x13370002;
+            break;
+        case 0xC001001A: /* MSR_K8_TOP_MEM1 */
+            *val = 0x80000000ULL;
+            break;
+        case 0xC001001D: /* MSR_K8_TOP_MEM2 */
+            *val = 0x280000000ULL;
+            break;
+        case 0xC0011033: /* IbsOpCtl */
+            *val = 0;
+            break;
     }
 
     return r;
@@ -3813,6 +3849,13 @@ static int exit_ept_violation(struct vcpu_t *vcpu, struct hax_tunnel *htun)
 mmio_handler:
 #endif
     return vcpu_emulate_insn(vcpu);
+}
+
+static int exit_xsetbv(struct vcpu_t *vcpu, struct hax_tunnel *htun)
+{
+    hax_warning("exit_xsetbv.\n");
+    advance_rip(vcpu);
+    return HAX_RESUME;
 }
 
 static void handle_mem_fault(struct vcpu_t *vcpu, struct hax_tunnel *htun)

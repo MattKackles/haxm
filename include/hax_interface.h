@@ -155,6 +155,8 @@ struct hax_tunnel {
         } debug;
     };
     uint64_t apic_base;
+    uint64_t guest_tsc;
+    uint64_t guest_nsec;
 } PACKED;
 
 struct hax_fastmmio {

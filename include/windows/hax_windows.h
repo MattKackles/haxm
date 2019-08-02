@@ -205,4 +205,7 @@ void hax_debug(char *fmt, ...);
 
 #define hax_assert(condition) ASSERT(condition)
 
+// Returns time in nanoseconds
+uint64_t hax_get_clock();
+
 #endif  // HAX_WINDOWS_HAX_WINDOWS_H_
